@@ -65,17 +65,25 @@ def fetch_url(url) -> dict:
     json_body = re.search(r'\{.*\}', body, re.DOTALL).group(0)
     mapping =  dict.fromkeys(range(32))
     clean_json_body = json_body.translate(mapping)
-    clean_json_body = clean_json_body.replace("118d", "")
+    clean_json_body = clean_json_body.replace("118d", "") # Here is hardcoded value to remove since it comes in chunks and i found no solution and decided to hard code it.
     return json.loads(clean_json_body)
 
 def search(search_term: list[str]) -> str:
     api_key = getenv('API_KEY')
     cx = getenv('CX')
     search_term_query = '+'.join(search_term)
-    url = f"https://www.googleapis.com/customsearch/v1?key={api_key}&cx={cx}&q={search_term_query}"
+    url = f"https://www.googleapis.com/customsearch/v1?key={api_key}&cx={cx}&q={search_term_query}&num=10"
 
     search_results = fetch_url(url)
-    print(json.dumps(search_results, indent=2))
+    search_items = search_results.get('items')
+    if search_items:
+        for i, item in enumerate(search_items):
+            title = item.get('title')
+            link = item.get('link')
+            snippet = item.get('snippet')
+            print(f"{i + 1}. {title}\n{link}\n{snippet}\n")
+    else:
+        print("No search results found!")
 
 def main():
     add_arguments()
