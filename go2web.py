@@ -142,8 +142,7 @@ def handle_chunked_body(chunked_body):
     return body
 
 
-def fetch_url(url: str) -> dict | str:
-    max_redirects = getenv('MAX_REDIRECTS')
+def fetch_url(url: str, max_redirects: int = int(getenv('MAX_REDIRECTS'))) -> dict | str:
     # Check if the response is already in the cache
     cached_response = cache.get(url)
     if cached_response:
@@ -187,7 +186,10 @@ def fetch_url(url: str) -> dict | str:
 
     status_line = headers.split("\r\n")[0]
     status_code = int(status_line.split(" ")[1])
-    if status_code in (301, 302):
+    if status_code in (301, 302, 303, 307, 308):
+        if max_redirects == 0:
+            print("Max redirects reached!")
+            return None
         print(f"Redirect detected! Status code: {status_code}")
         # Extract the Location header
         location_header = None
@@ -198,6 +200,9 @@ def fetch_url(url: str) -> dict | str:
         
         if location_header:
             new_url = location_header.group(1).strip()
+            if not new_url.startswith('http'):
+                new_url = f"https://{host}{new_url}"
+            
             print(f"Redirecting to: {new_url}")
             return fetch_url(new_url, max_redirects - 1)
         else:
@@ -299,7 +304,6 @@ def main():
         return
 
     if args.url:
-        print(f"WIP!")
         output = fetch_url(args.url)
         if type(output) == dict:
             print(json.dumps(output, indent=4))
