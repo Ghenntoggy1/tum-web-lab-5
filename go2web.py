@@ -74,21 +74,43 @@ class FileCache:
 # Initialize the cache
 cache = FileCache(cache_file='cache.json')
 
-def format_html(html: str) -> str:
+def display_html(body: str) -> None:
+    soup = BeautifulSoup(body, 'html.parser')
 
-    # Parse the HTML
-    soup = BeautifulSoup(html, 'html.parser')
+    # Remove unwanted tags
+    for tag in soup(['img', 'script', 'style', 'svg']):
+        tag.decompose()
 
-    # Remove all comments
-    for comment in soup.find_all(text=lambda text: isinstance(text, Comment)):
-        comment.extract()
+    # Format links
+    for a in soup.find_all('a'):
+        if a.get('href') == a.text:
+            a.replace_with(a.text)
+        else:
+            a.replace_with(f"{a.text} (link: {a.get('href')})")
 
-    # Remove all script tags
-    for script in soup.find_all("script"):
-        script.extract()
+    # Format headings
+    for heading in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+        heading.replace_with(f"\n{heading.text.upper()}\n")
 
-    # Return the prettified HTML
-    return soup.prettify()
+    # Format paragraphs
+    for p in soup.find_all('p'):
+        p.replace_with(f"\n{p.text}\n")
+
+    # Format unordered lists
+    for ul in soup.find_all('ul'):
+        ul.replace_with('\n'.join(f"~ {re.sub(r'\n+', ' ', li.text.rstrip().strip())}" for li in ul.find_all('li')) + '\n')
+
+    # Format ordered lists
+    for ol in soup.find_all('ol'):
+        ol.replace_with('\n'.join(f"{i + 1}. {re.sub(r'\n+', ' ', li.text.rstrip().strip())}" for i, li in enumerate(ol.find_all('li')))) + '\n'
+
+    # Get the final text
+    text = soup.get_text().rstrip().strip()
+
+    text = re.sub(r'\n+', '\n', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r' +', ' ', text)
+    return text
 
 def handle_chunked_body(chunked_body):
     body = b""
@@ -163,13 +185,14 @@ def fetch_url(url: str) -> dict | str:
     body = response[header_end + 4:]
 
     # Handle chunked encoding
-    if "Transfer-Encoding: chunked" in headers:
+    if "Transfer-Encoding: chunked" in headers or "transfer-encoding: chunked" in headers:
         body = handle_chunked_body(body)
-
-    print(f"Response:\n{headers}\n")
-
     # check header for content type
-    content_type = re.search(r"Content-Type: (.+)", headers)
+    content_type = None
+    if 'Content-Type' in headers:
+        content_type = re.search(r"Content-Type: (.+)", headers)
+    if 'content-type' in headers:
+        content_type = re.search(r"content-type: (.+)", headers)
     charset = None
     data_type = None
     if content_type:
@@ -196,7 +219,7 @@ def fetch_url(url: str) -> dict | str:
 
         return response_data
     elif "text/html" in data_type:
-        pretty_html = format_html(decoded_body)
+        pretty_html = display_html(decoded_body)
         cache.set(url, pretty_html)
         return pretty_html
     else:
