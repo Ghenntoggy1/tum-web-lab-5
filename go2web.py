@@ -10,9 +10,10 @@ import ssl
 import webbrowser
 from typing import Any, Dict, Optional
 from enum import Enum
-from bs4 import BeautifulSoup, Comment
+from bs4 import BeautifulSoup
 
 load_dotenv()
+
 
 help_message: str = """HELP:
 go2web -u <URL>           # make an HTTP request to the specified URL and print the response
@@ -208,7 +209,7 @@ def fetch_url(url: str, max_redirects: int = int(getenv('MAX_REDIRECTS'))) -> di
         else:
             print("No location header found in the response!")
             return None
-    print(headers)
+        
     # Handle chunked encoding
     if "Transfer-Encoding: chunked" in headers or "transfer-encoding: chunked" in headers:
         body = handle_chunked_body(body)
@@ -230,7 +231,6 @@ def fetch_url(url: str, max_redirects: int = int(getenv('MAX_REDIRECTS'))) -> di
     
     decoded_body = body.decode(charset) if charset else body.decode('utf-8')
     
-    print(f"Data type: {data_type}")
     if "application/json" in data_type:
         json_body = re.search(r'\{.*\}', decoded_body, re.DOTALL).group(0)
         mapping = dict.fromkeys(range(32))
