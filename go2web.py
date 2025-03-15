@@ -9,6 +9,7 @@ from os import getenv, path
 import ssl
 import webbrowser
 from typing import Any, Dict, Optional
+from enum import Enum
 
 load_dotenv()
 
@@ -33,6 +34,10 @@ def add_arguments():
     parser.add_argument('-s', '--search', type=str, metavar = "str", nargs='+')
     parser.add_argument('-c', '--clear', action='store_true')
     parser.add_argument('-h', '--help', action='help')
+
+class EngineEnum(Enum):
+    GOOGLE = 1
+    DUCKDUCKGO = 2
 
 class FileCache:
     def __init__(self, cache_file: str = 'cache.json'):
@@ -98,39 +103,47 @@ def fetch_url(url: str, data_type: str) -> dict:
     print(f"Request:\n{request}")
     wrapped_sock.send(request.encode())
 
-    response = b""
+    response = ""
     while True:
         part = wrapped_sock.recv(4096)
         if not part:
             break
-        response += part
+        response += part.decode("utf-8")
     wrapped_sock.close()
-    data = response.decode('utf-8', errors='ignore')
+    data = response
     headers, body = data.split('\r\n\r\n', 1)
     json_body = re.search(r'\{.*\}', body, re.DOTALL).group(0)
     mapping = dict.fromkeys(range(32))
     clean_json_body = json_body.translate(mapping)
     # clean_json_body = clean_json_body.replace("118d", "")  # Hardcoded value removal since I could not solve the issue, response comes chunked and my
-    #                                                        # methods were not able to take the entire response
+    #                                                        # methods were not able to take the entire response. SOLVED: in loop decode response until no more data.
     response_data = json.loads(clean_json_body)
-    print(f"Response:\n{response_data}")
-
+    
     # Store the response in the cache
     cache.set(url, response_data)
 
     return response_data
 
-def search(search_term: list[str]) -> str:
-    api_key = getenv('SERPAPI_API_KEY')
-    cx = getenv('CX')
-    engine = getenv('ENGINE')
-    region = getenv('REGION')
+def search(search_term: list[str], engineEnum: EngineEnum = EngineEnum.DUCKDUCKGO) -> str:
     search_term_query = '+'.join(search_term[0].split())
-    url = f"https://serpapi.com/search?engine={engine}&kl={region}&q={search_term_query}&api_key={api_key}"
-    # url = f"https://www.googleapis.com/customsearch/v1?key={api_key}&cx={cx}&q={search_term_query}&num=10"
+    if engineEnum == EngineEnum.DUCKDUCKGO:
+        api_key = getenv('SERPAPI_API_KEY')
+        engine = getenv('ENGINE')
+        region = getenv('REGION')
+        url = f"https://serpapi.com/search?engine={engine}&kl={region}&q={search_term_query}&api_key={api_key}" # SERP API for DuckDuckGo
+    elif engineEnum == EngineEnum.GOOGLE:
+        api_key = getenv('GOOGLE_API_KEY')
+        cx = getenv('CX')
+        url = f"https://www.googleapis.com/customsearch/v1?key={api_key}&cx={cx}&q={search_term_query}&num=10"
+    else:
+        print("Invalid search engine provided!")
+        return
+
     print(f"Search URL: {url}")
     search_results = fetch_url(url, "application/json")
-    search_items = search_results.get('organic_results')
+    # print(f"Search Results:\n{search_results}")
+    
+    search_items = search_results.get('organic_results' if engineEnum == EngineEnum.DUCKDUCKGO else 'items')
     if search_items:
         for i, item in enumerate(search_items):
             title = item.get('title')
@@ -160,14 +173,19 @@ def main():
         print("No arguments provided. Check the help message below:\n")
         print(help_message)
         return
-    print(f"Arguments provided: {args}")
+
     if args.url:
         # TODO: Implement HTTP Request and HTML Parsing
         print(f"NOT IMPLEMENTED!")
     elif args.search:
-        # TODO: Implement search for top 10 results using search engine based on the search term
-        print(f"WIP!")
-        search(args.search)
+        print(f"Select a search engine to use:\n1. DuckDuckGo\n2. Google")
+        choice = input()
+        if choice == '1':
+            search(args.search, EngineEnum.DUCKDUCKGO)
+        elif choice == '2':
+            search(args.search, EngineEnum.GOOGLE)
+        else:
+            print("Invalid choice!")
     elif args.clear:
         # Clear the cache
         cache.clear()
