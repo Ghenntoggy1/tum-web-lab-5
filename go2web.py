@@ -10,6 +10,7 @@ import ssl
 import webbrowser
 from typing import Any, Dict, Optional
 from enum import Enum
+from bs4 import BeautifulSoup, Comment
 
 load_dotenv()
 
@@ -73,11 +74,57 @@ class FileCache:
 # Initialize the cache
 cache = FileCache(cache_file='cache.json')
 
-def fetch_url(url: str, data_type: str) -> dict:
+def format_html(html: str) -> str:
+
+    # Parse the HTML
+    soup = BeautifulSoup(html, 'html.parser')
+
+    # Remove all comments
+    for comment in soup.find_all(text=lambda text: isinstance(text, Comment)):
+        comment.extract()
+
+    # Remove all script tags
+    for script in soup.find_all("script"):
+        script.extract()
+
+    # Return the prettified HTML
+    return soup.prettify()
+
+def handle_chunked_body(chunked_body):
+    body = b""
+    while True:
+        # Find the end of the chunk size line
+        chunk_size_end = chunked_body.find(b"\r\n")
+        if chunk_size_end == -1:
+            break
+
+        # Extract the chunk size (hexadecimal)
+        chunk_size_line = chunked_body[:chunk_size_end]
+        chunk_size = int(chunk_size_line, 16)
+
+        # If chunk size is 0, we've reached the end
+        if chunk_size == 0:
+            break
+
+        # Extract the chunk data
+        chunk_start = chunk_size_end + 2
+        chunk_end = chunk_start + chunk_size
+        chunk_data = chunked_body[chunk_start:chunk_end]
+
+        # Append the chunk data to the body
+        body += chunk_data
+
+        # Move to the next chunk
+        chunked_body = chunked_body[chunk_end + 2:]
+
+    return body
+
+
+def fetch_url(url: str) -> dict | str:
     # Check if the response is already in the cache
     cached_response = cache.get(url)
     if cached_response:
-        print("Cache hit!")
+        print("\nFound in cache!\n")
         return cached_response
 
     parsed_url = urlparse(url)
@@ -97,32 +144,64 @@ def fetch_url(url: str, data_type: str) -> dict:
         f"GET {path} HTTP/1.1\r\n"
         f"Host: {host}\r\n"
         "User-Agent: go2web/1.0\r\n"
-        f"Accept: {data_type}\r\n"
         "Connection: close\r\n\r\n"
     )
     print(f"Request:\n{request}")
     wrapped_sock.send(request.encode())
 
-    response = ""
+    response = b""
     while True:
         part = wrapped_sock.recv(4096)
         if not part:
             break
-        response += part.decode("utf-8")
+        response += part
     wrapped_sock.close()
-    data = response
-    headers, body = data.split('\r\n\r\n', 1)
-    json_body = re.search(r'\{.*\}', body, re.DOTALL).group(0)
-    mapping = dict.fromkeys(range(32))
-    clean_json_body = json_body.translate(mapping)
-    # clean_json_body = clean_json_body.replace("118d", "")  # Hardcoded value removal since I could not solve the issue, response comes chunked and my
-    #                                                        # methods were not able to take the entire response. SOLVED: in loop decode response until no more data.
-    response_data = json.loads(clean_json_body)
-    
-    # Store the response in the cache
-    cache.set(url, response_data)
 
-    return response_data
+    # Split the response into headers and body
+    header_end = response.find(b"\r\n\r\n")
+    headers = response[:header_end].decode("utf-8")
+    body = response[header_end + 4:]
+
+    # Handle chunked encoding
+    if "Transfer-Encoding: chunked" in headers:
+        body = handle_chunked_body(body)
+
+    print(f"Response:\n{headers}\n")
+
+    # check header for content type
+    content_type = re.search(r"Content-Type: (.+)", headers)
+    charset = None
+    data_type = None
+    if content_type:
+        data_type = content_type.group(1).split(";")[0].strip()
+        if "charset" in content_type.group(1):
+            charset = re.search(r"charset=(.+)", content_type.group(1)).group(1).strip()
+    else:
+        print("No content type found in the response header!")
+        return None
+    
+    decoded_body = body.decode(charset) if charset else body.decode('utf-8')
+    
+    print(f"Data type: {data_type}")
+    if "application/json" in data_type:
+        json_body = re.search(r'\{.*\}', decoded_body, re.DOTALL).group(0)
+        mapping = dict.fromkeys(range(32))
+        clean_json_body = json_body.translate(mapping)
+        # clean_json_body = clean_json_body.replace("118d", "")  # Hardcoded value removal since I could not solve the issue, response comes chunked and my
+        #                                                        # methods were not able to take the entire response. SOLVED: in loop decode response until no more data.
+        response_data = json.loads(clean_json_body)
+        
+        # Store the response in the cache
+        cache.set(url, response_data)
+
+        return response_data
+    elif "text/html" in data_type:
+        pretty_html = format_html(decoded_body)
+        cache.set(url, pretty_html)
+        return pretty_html
+    else:
+        print("Invalid data type provided!")
+        return None
 
 def search(search_term: list[str], engineEnum: EngineEnum = EngineEnum.DUCKDUCKGO) -> str:
     search_term_query = '+'.join(search_term[0].split())
@@ -140,8 +219,10 @@ def search(search_term: list[str], engineEnum: EngineEnum = EngineEnum.DUCKDUCKG
         return
 
     print(f"Search URL: {url}")
-    search_results = fetch_url(url, "application/json")
-    # print(f"Search Results:\n{search_results}")
+    search_results = fetch_url(url)
+    if not search_results:
+        print("No search results found!")
+        return
     
     search_items = search_results.get('organic_results' if engineEnum == EngineEnum.DUCKDUCKGO else 'items')
     if search_items:
@@ -175,8 +256,14 @@ def main():
         return
 
     if args.url:
-        # TODO: Implement HTTP Request and HTML Parsing
-        print(f"NOT IMPLEMENTED!")
+        print(f"WIP!")
+        output = fetch_url(args.url)
+        if type(output) == dict:
+            print(json.dumps(output, indent=4))
+        elif type(output) == str:
+            print(output)
+        else:
+            print("Invalid data type!")
     elif args.search:
         print(f"Select a search engine to use:\n1. DuckDuckGo\n2. Google")
         choice = input()
