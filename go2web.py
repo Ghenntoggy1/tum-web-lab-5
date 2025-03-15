@@ -143,6 +143,7 @@ def handle_chunked_body(chunked_body):
 
 
 def fetch_url(url: str) -> dict | str:
+    max_redirects = getenv('MAX_REDIRECTS')
     # Check if the response is already in the cache
     cached_response = cache.get(url)
     if cached_response:
@@ -184,6 +185,25 @@ def fetch_url(url: str) -> dict | str:
     headers = response[:header_end].decode("utf-8")
     body = response[header_end + 4:]
 
+    status_line = headers.split("\r\n")[0]
+    status_code = int(status_line.split(" ")[1])
+    if status_code in (301, 302):
+        print(f"Redirect detected! Status code: {status_code}")
+        # Extract the Location header
+        location_header = None
+        if 'Location' in headers:
+            location_header = re.search(r"Location: (.+)\r\n", headers, re.IGNORECASE)
+        elif 'location' in headers:
+            location_header = re.search(r"location: (.+)\r\n", headers, re.IGNORECASE)
+        
+        if location_header:
+            new_url = location_header.group(1).strip()
+            print(f"Redirecting to: {new_url}")
+            return fetch_url(new_url, max_redirects - 1)
+        else:
+            print("No location header found in the response!")
+            return None
+    print(headers)
     # Handle chunked encoding
     if "Transfer-Encoding: chunked" in headers or "transfer-encoding: chunked" in headers:
         body = handle_chunked_body(body)
@@ -191,7 +211,7 @@ def fetch_url(url: str) -> dict | str:
     content_type = None
     if 'Content-Type' in headers:
         content_type = re.search(r"Content-Type: (.+)", headers)
-    if 'content-type' in headers:
+    elif 'content-type' in headers:
         content_type = re.search(r"content-type: (.+)", headers)
     charset = None
     data_type = None
